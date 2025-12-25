@@ -6,7 +6,11 @@
     "install-all": "cd backend && npm install && cd ../frontend && npm install",
     "dev": "concurrently \"cd backend && npm run dev\" \"cd frontend && npm run dev\"",
     "build": "cd frontend && npm run build",
-    "start": "cd backend && npm start"
+    "start": "cd backend && npm start",
+
+    "setup-db": "cd backend && node scripts/setup-admin-system.js",
+    "show-admins": "cd backend && node scripts/show-admin-info.js",
+    "test-routes": "node test-routes.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.0"
