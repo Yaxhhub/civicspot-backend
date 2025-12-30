@@ -18,12 +18,8 @@ app.use((req, res, next) => {
   const origin = req.get('Origin');
   console.log(`Request: ${req.method} ${req.path} from origin: ${origin}`);
   
-  const allowedOrigins = [
-    'https://civicspot-frontend.vercel.app',
-    'https://civicspot-frontend-git-main-yash-rajputs-projects-cf6c470d.vercel.app'
-  ];
-  
-  if (allowedOrigins.includes(origin)) {
+  // Allow all vercel.app subdomains and production domain
+  if (origin && (origin.includes('vercel.app') || origin.includes('localhost'))) {
     res.header('Access-Control-Allow-Origin', origin);
   }
   
