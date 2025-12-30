@@ -2,10 +2,20 @@ const vision = require('@google-cloud/vision');
 
 class VisionService {
   constructor() {
-    this.client = new vision.ImageAnnotatorClient({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-      keyFilename: process.env.GOOGLE_CLOUD_KEY_FILE
-    });
+    // Check if we have JSON credentials in environment variable
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+      const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
+      this.client = new vision.ImageAnnotatorClient({
+        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+        credentials: credentials
+      });
+    } else {
+      // Fallback to key file for local development
+      this.client = new vision.ImageAnnotatorClient({
+        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+        keyFilename: process.env.GOOGLE_CLOUD_KEY_FILE
+      });
+    }
   }
 
   async analyzeImage(imageUrl) {

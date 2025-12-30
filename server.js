@@ -16,7 +16,7 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://civicspot-frontend.onrender.com', 'https://civicspot-backend.onrender.com'] 
+    ? ['https://civicspot-frontend.vercel.app', 'https://civicspot-backend.onrender.com'] 
     : ['http://localhost:3000', 'http://localhost:5173'],
   credentials: true
 }));
