@@ -24,10 +24,13 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Get all campaigns
+// Get all campaigns (featured first)
 router.get('/', async (req, res) => {
   try {
-    const campaigns = await Campaign.find().populate('createdBy', 'name').populate('participants', 'name');
+    const campaigns = await Campaign.find()
+      .populate('createdBy', 'name')
+      .populate('participants', 'name')
+      .sort({ isFeatured: -1, createdAt: -1 });
     res.json(campaigns);
   } catch (error) {
     res.status(500).json({ message: error.message });

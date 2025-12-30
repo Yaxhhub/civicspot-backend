@@ -7,16 +7,20 @@ const { auth } = require('../middleware/auth');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Get all posts (only approved for regular users)
+// Get all posts
 router.get('/', async (req, res) => {
   try {
-    const posts = await Post.find({ status: 'approved' })
+    console.log('Fetching posts from database...');
+    const posts = await Post.find()
       .populate('user', 'name')
       .populate('campaign', 'title')
       .populate('comments.user', 'name')
       .sort({ createdAt: -1 });
+    console.log(`Found ${posts.length} posts`);
+    
     res.json(posts);
   } catch (error) {
+    console.error('Error fetching posts:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -65,14 +69,20 @@ router.post('/', auth, upload.single('image'), async (req, res) => {
     
     console.log('Final image URL:', imageUrl);
 
-    const post = new Post({
+    const postData = {
       user: req.user._id,
       campaign: campaignId || null,
       image: imageUrl,
       caption
-    });
-
+    };
+    
+    console.log('Creating post with data:', postData);
+    const post = new Post(postData);
+    console.log('Post before save:', post.toObject());
+    
     await post.save();
+    console.log('Post after save:', post.toObject());
+    
     await post.populate('user', 'name');
     if (campaignId) {
       await post.populate('campaign', 'title');

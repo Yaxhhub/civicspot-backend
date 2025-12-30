@@ -12,12 +12,12 @@ const router = express.Router();
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, phone } = req.body;
     
     const existingUser = await User.findOne({ email });
     if (existingUser) return res.status(400).json({ message: 'User already exists' });
 
-    const user = new User({ name, email, password, isAdmin: email === 'admin@civicspot.com' });
+    const user = new User({ name, email, password, phone, isAdmin: email === 'admin@civicspot.com' });
     await user.save();
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -32,13 +32,23 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate('department', 'name');
     if (!user || !await user.comparePassword(password)) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    res.json({ token, user: { id: user._id, name: user.name, email, isAdmin: user.isAdmin } });
+    res.json({ 
+      token, 
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email, 
+        isAdmin: user.isAdmin,
+        adminType: user.adminType,
+        department: user.department
+      } 
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -47,7 +57,9 @@ router.post('/login', async (req, res) => {
 // Get profile
 router.get('/profile', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('-password');
+    const user = await User.findById(req.user._id)
+      .select('-password')
+      .populate('department', 'name');
     res.json({ user });
   } catch (error) {
     res.status(500).json({ message: error.message });

@@ -6,9 +6,13 @@ const userSchema = new mongoose.Schema({
   username: { type: String, unique: true, sparse: true },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
+  phone: { type: String },
   profilePicture: { type: String },
   isAdmin: { type: Boolean, default: false },
-  isActive: { type: Boolean, default: true }
+  adminType: { type: String, enum: ['super', 'department'] },
+  department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  isActive: { type: Boolean, default: true },
+  points: { type: Number, default: 0 }
 }, { timestamps: true });
 
 userSchema.pre('save', async function(next) {

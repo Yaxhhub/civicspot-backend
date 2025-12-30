@@ -4,19 +4,34 @@ const Campaign = require('../models/Campaign');
 const User = require('../models/User');
 const Post = require('../models/Post');
 const Notification = require('../models/Notification');
-const { adminAuth } = require('../middleware/auth');
+const { adminAuth, superAdminAuth, departmentAdminAuth } = require('../middleware/auth');
+const { awardPoints } = require('../utils/rewardSystem');
+
 
 const router = express.Router();
 
-// Get dashboard stats
-router.get('/stats', adminAuth, async (req, res) => {
+// Test route
+router.get('/test', (req, res) => {
+  res.json({ message: 'Admin routes working', timestamp: new Date().toISOString() });
+});
+
+// Get dashboard stats (filtered by department if department admin)
+router.get('/stats', departmentAdminAuth, async (req, res) => {
   try {
-    const totalReports = await Report.countDocuments();
-    const resolvedReports = await Report.countDocuments({ status: 'resolved' });
-    const activeCampaigns = await Campaign.countDocuments({ date: { $gte: new Date() } });
-    const totalUsers = await User.countDocuments({ isAdmin: false });
-    const totalPosts = await Post.countDocuments();
-    const pendingPosts = await Post.countDocuments({ status: 'pending' });
+    let reportFilter = {};
+    
+    // If department admin, only count reports for their department
+    if (req.user.adminType === 'department' && req.user.department) {
+      reportFilter.assignedDepartment = req.user.department._id;
+    }
+    
+    const [totalReports, resolvedReports, activeCampaigns, totalUsers, totalPosts] = await Promise.all([
+      Report.countDocuments(reportFilter),
+      Report.countDocuments({ ...reportFilter, status: 'resolved' }),
+      Campaign.countDocuments({ date: { $gte: new Date() } }),
+      User.countDocuments({ isAdmin: false }),
+      Post.countDocuments()
+    ]);
 
     res.json({
       totalReports,
@@ -24,7 +39,7 @@ router.get('/stats', adminAuth, async (req, res) => {
       activeCampaigns,
       totalUsers,
       totalPosts,
-      pendingPosts
+      department: req.user.department?.name || 'All Departments'
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -32,7 +47,7 @@ router.get('/stats', adminAuth, async (req, res) => {
 });
 
 // Get analytics data
-router.get('/analytics', adminAuth, async (req, res) => {
+router.get('/analytics', departmentAdminAuth, async (req, res) => {
   try {
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -147,22 +162,51 @@ router.get('/analytics', adminAuth, async (req, res) => {
   }
 });
 
-// Get all reports for admin
-router.get('/reports', adminAuth, async (req, res) => {
+// Get reports for admin (filtered by department if department admin)
+router.get('/reports', departmentAdminAuth, async (req, res) => {
   try {
-    const reports = await Report.find().populate('reportedBy', 'name email');
+    let filter = {};
+    
+    // If department admin, only show reports for their department
+    if (req.user.adminType === 'department' && req.user.department) {
+      filter.assignedDepartment = req.user.department._id;
+    }
+    
+    const reports = await Report.find(filter)
+      .populate('reportedBy', 'name email')
+      .populate('assignedDepartment', 'name');
     res.json(reports);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-// Update report status
-router.patch('/reports/:id/status', adminAuth, async (req, res) => {
+// Update report status (check department access)
+router.patch('/reports/:id/status', departmentAdminAuth, async (req, res) => {
   try {
     const { status } = req.body;
-    const report = await Report.findByIdAndUpdate(req.params.id, { status }, { new: true })
-      .populate('reportedBy', 'name');
+    
+    // Find the report first
+    const report = await Report.findById(req.params.id).populate('assignedDepartment');
+    if (!report) {
+      return res.status(404).json({ message: 'Report not found' });
+    }
+    
+    // Check if department admin has access to this report
+    if (req.user.adminType === 'department' && 
+        req.user.department && 
+        report.assignedDepartment?._id.toString() !== req.user.department._id.toString()) {
+      return res.status(403).json({ message: 'Access denied: Report not in your department' });
+    }
+    
+    report.status = status;
+    await report.save();
+    await report.populate('reportedBy', 'name');
+    
+    // Award bonus points when report gets approved
+    if (status === 'approved' && report.reportedBy) {
+      await awardPoints(report.reportedBy._id, 'REPORT_APPROVED', `Report approved: ${report.title}`);
+    }
     
     // Send notification to user
     if (report.reportedBy) {
@@ -173,6 +217,8 @@ router.patch('/reports/:id/status', adminAuth, async (req, res) => {
         recipients: [report.reportedBy._id],
         createdBy: req.user._id
       }).save();
+      
+
     }
     
     res.json(report);
@@ -181,29 +227,90 @@ router.patch('/reports/:id/status', adminAuth, async (req, res) => {
   }
 });
 
-// Get all campaigns for admin
-router.get('/campaigns', adminAuth, async (req, res) => {
+// Get all campaigns for admin (featured first)
+router.get('/campaigns', departmentAdminAuth, async (req, res) => {
   try {
-    const campaigns = await Campaign.find().populate('createdBy', 'name email').populate('participants', 'name');
+    const campaigns = await Campaign.find()
+      .populate('createdBy', 'name email')
+      .populate('participants', 'name')
+      .sort({ isFeatured: -1, createdAt: -1 });
     res.json(campaigns);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-// Feature campaign
-router.patch('/campaigns/:id/feature', adminAuth, async (req, res) => {
+// Get all departments
+router.get('/departments', departmentAdminAuth, async (req, res) => {
   try {
-    const { isFeatured } = req.body;
-    const campaign = await Campaign.findByIdAndUpdate(req.params.id, { isFeatured }, { new: true });
-    res.json(campaign);
+    const Department = require('../models/Department');
+    const departments = await Department.find();
+    res.json(departments);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 });
 
-// Get all users
-router.get('/users', adminAuth, async (req, res) => {
+// Toggle campaign featured status
+router.patch('/campaigns/:id/toggle-feature', departmentAdminAuth, async (req, res) => {
+  try {
+    console.log('Toggle feature route hit for campaign ID:', req.params.id);
+    const campaign = await Campaign.findById(req.params.id);
+    if (!campaign) {
+      console.log('Campaign not found:', req.params.id);
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    console.log('Current featured status:', campaign.isFeatured);
+    campaign.isFeatured = !campaign.isFeatured;
+    await campaign.save();
+    console.log('New featured status:', campaign.isFeatured);
+    
+    await campaign.populate('createdBy', 'name email');
+    await campaign.populate('participants', 'name');
+    
+    res.json({ 
+      message: `Campaign ${campaign.isFeatured ? 'featured' : 'unfeatured'} successfully`,
+      campaign 
+    });
+  } catch (error) {
+    console.error('Toggle feature error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Feature/unfeature campaign (explicit)
+router.patch('/campaigns/:id/feature', departmentAdminAuth, async (req, res) => {
+  try {
+    const { isFeatured } = req.body;
+    
+    if (typeof isFeatured !== 'boolean') {
+      return res.status(400).json({ message: 'isFeatured must be a boolean value' });
+    }
+    
+    const campaign = await Campaign.findById(req.params.id);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    campaign.isFeatured = isFeatured;
+    await campaign.save();
+    
+    await campaign.populate('createdBy', 'name email');
+    await campaign.populate('participants', 'name');
+    
+    res.json({ 
+      message: `Campaign ${isFeatured ? 'featured' : 'unfeatured'} successfully`,
+      campaign 
+    });
+  } catch (error) {
+    console.error('Feature campaign error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get all users (super admin only)
+router.get('/users', superAdminAuth, async (req, res) => {
   try {
     const users = await User.find({ isAdmin: false }).select('-password');
     res.json(users);
@@ -212,8 +319,52 @@ router.get('/users', adminAuth, async (req, res) => {
   }
 });
 
+// Get department admins (super admin only)
+router.get('/department-admins', superAdminAuth, async (req, res) => {
+  try {
+    const admins = await User.find({ 
+      isAdmin: true, 
+      adminType: 'department' 
+    }).populate('department').select('-password');
+    res.json(admins);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Create department admin (super admin only)
+router.post('/create-department-admin', superAdminAuth, async (req, res) => {
+  try {
+    const { name, email, password, departmentId } = req.body;
+    
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+    
+    const user = new User({
+      name,
+      email,
+      password,
+      isAdmin: true,
+      adminType: 'department',
+      department: departmentId
+    });
+    
+    await user.save();
+    await user.populate('department');
+    
+    res.status(201).json({ 
+      message: 'Department admin created successfully',
+      admin: { ...user.toObject(), password: undefined }
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
 // Toggle user status
-router.patch('/users/:id/toggle-status', adminAuth, async (req, res) => {
+router.patch('/users/:id/toggle-status', superAdminAuth, async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     user.isActive = !user.isActive;
@@ -225,7 +376,7 @@ router.patch('/users/:id/toggle-status', adminAuth, async (req, res) => {
 });
 
 // Get all posts for moderation
-router.get('/posts', adminAuth, async (req, res) => {
+router.get('/posts', departmentAdminAuth, async (req, res) => {
   try {
     const posts = await Post.find()
       .populate('user', 'name email')
@@ -238,38 +389,193 @@ router.get('/posts', adminAuth, async (req, res) => {
   }
 });
 
-// Update post status
-router.patch('/posts/:id/status', adminAuth, async (req, res) => {
-  try {
-    const { status } = req.body;
-    if (!['pending', 'approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ message: 'Invalid status' });
-    }
-    
-    const post = await Post.findByIdAndUpdate(
-      req.params.id,
-      { status },
-      { new: true }
-    ).populate('user', 'name email');
-    
-    if (!post) {
-      return res.status(404).json({ message: 'Post not found' });
-    }
-    
-    res.json(post);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-});
+
 
 // Delete post (admin)
-router.delete('/posts/:id', adminAuth, async (req, res) => {
+router.delete('/posts/:id', departmentAdminAuth, async (req, res) => {
   try {
     const post = await Post.findByIdAndDelete(req.params.id);
     if (!post) {
       return res.status(404).json({ message: 'Post not found' });
     }
     res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete report (admin)
+router.delete('/reports/:id', departmentAdminAuth, async (req, res) => {
+  try {
+    const report = await Report.findByIdAndDelete(req.params.id);
+    if (!report) {
+      return res.status(404).json({ message: 'Report not found' });
+    }
+    res.json({ message: 'Report deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update user points (admin)
+router.patch('/users/:id/points', superAdminAuth, async (req, res) => {
+  try {
+    const { points } = req.body;
+    const user = await User.findByIdAndUpdate(req.params.id, { points }, { new: true });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// NOTIFICATION MANAGEMENT
+// Get all notifications for admin
+router.get('/notifications', departmentAdminAuth, async (req, res) => {
+  try {
+    const notifications = await Notification.find()
+      .populate('createdBy', 'name')
+      .populate('recipients', 'name email')
+      .sort({ createdAt: -1 });
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Create notification
+router.post('/notifications', departmentAdminAuth, async (req, res) => {
+  try {
+    const { title, message, type, isGlobal, userIds } = req.body;
+    const notification = new Notification({
+      title,
+      message,
+      type,
+      isGlobal,
+      recipients: isGlobal ? [] : userIds,
+      createdBy: req.user._id
+    });
+    await notification.save();
+    res.status(201).json(notification);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Delete notification
+router.delete('/notifications/:id', departmentAdminAuth, async (req, res) => {
+  try {
+    await Notification.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Notification deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// REWARD MANAGEMENT
+// Get rewards overview
+router.get('/rewards', departmentAdminAuth, async (req, res) => {
+  try {
+    const Reward = require('../models/Reward');
+    
+    // Get all users with points
+    const allUsers = await User.find({ isAdmin: false })
+      .select('name email points createdAt')
+      .sort({ points: -1 });
+    
+    // Get top users
+    const topUsers = allUsers.slice(0, 20);
+    
+    const totalPointsAwarded = await User.aggregate([
+      { $match: { isAdmin: false } },
+      { $group: { _id: null, total: { $sum: '$points' } } }
+    ]);
+    
+    const recentActivities = await Reward.find()
+      .populate('user', 'name email')
+      .sort({ updatedAt: -1 })
+      .limit(10);
+    
+    res.json({
+      allUsers,
+      topUsers,
+      totalPointsAwarded: totalPointsAwarded[0]?.total || 0,
+      recentActivities
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Award points to user
+router.post('/users/:id/award-points', departmentAdminAuth, async (req, res) => {
+  try {
+    const { points, description } = req.body;
+    
+    if (!points || points <= 0) {
+      return res.status(400).json({ message: 'Valid points amount required' });
+    }
+    
+    await awardPoints(req.params.id, 'ADMIN_AWARD', description || 'Admin awarded points', points);
+    
+    const user = await User.findById(req.params.id).select('name points');
+    res.json({ message: 'Points awarded successfully', user });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// MODERATION FEATURES
+// Get flagged content
+router.get('/moderation/flagged', departmentAdminAuth, async (req, res) => {
+  try {
+    const flaggedPosts = await Post.find({ isFlagged: true })
+      .populate('user', 'name email')
+      .populate('campaign', 'title')
+      .sort({ createdAt: -1 });
+    
+    const flaggedReports = await Report.find({ isFlagged: true })
+      .populate('reportedBy', 'name email')
+      .sort({ createdAt: -1 });
+    
+    res.json({ posts: flaggedPosts, reports: flaggedReports });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Flag/unflag content
+router.patch('/moderation/:type/:id/flag', departmentAdminAuth, async (req, res) => {
+  try {
+    const { type, id } = req.params;
+    const { isFlagged } = req.body;
+    
+    let item;
+    if (type === 'post') {
+      item = await Post.findByIdAndUpdate(id, { isFlagged }, { new: true });
+    } else if (type === 'report') {
+      item = await Report.findByIdAndUpdate(id, { isFlagged }, { new: true });
+    }
+    
+    res.json({ message: `${type} ${isFlagged ? 'flagged' : 'unflagged'} successfully`, item });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Get moderation stats
+router.get('/moderation/stats', departmentAdminAuth, async (req, res) => {
+  try {
+    const flaggedPostsCount = await Post.countDocuments({ isFlagged: true });
+    const flaggedReportsCount = await Report.countDocuments({ isFlagged: true });
+    const totalPostsCount = await Post.countDocuments();
+    const totalReportsCount = await Report.countDocuments();
+    
+    res.json({
+      flaggedPosts: flaggedPostsCount,
+      flaggedReports: flaggedReportsCount,
+      totalPosts: totalPostsCount,
+      totalReports: totalReportsCount
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
