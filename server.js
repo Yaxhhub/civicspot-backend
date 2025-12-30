@@ -21,20 +21,8 @@ app.use((req, res, next) => {
 
 // Middleware
 app.use(cors({
-  origin: function (origin, callback) {
-    const allowedOrigins = process.env.NODE_ENV === 'production' 
-      ? ['https://civicspot-frontend.vercel.app'] 
-      : ['http://localhost:3000', 'http://localhost:5173'];
-    
-    console.log('CORS check - Origin:', origin, 'Allowed:', allowedOrigins);
-    
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
+  origin: '*',
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
