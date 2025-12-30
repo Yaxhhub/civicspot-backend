@@ -15,7 +15,18 @@ const app = express();
 
 // Simple CORS middleware
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://civicspot-frontend.vercel.app');
+  const origin = req.get('Origin');
+  console.log(`Request: ${req.method} ${req.path} from origin: ${origin}`);
+  
+  const allowedOrigins = [
+    'https://civicspot-frontend.vercel.app',
+    'https://civicspot-frontend-git-main-yash-rajputs-projects-cf6c470d.vercel.app'
+  ];
+  
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
