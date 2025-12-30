@@ -13,6 +13,34 @@ router.post('/', auth, upload.single('image'), async (req, res) => {
   try {
     const { title, description, type, customType, latitude, longitude, address } = req.body;
     
+    // Check for duplicate reports within 100 meters radius
+    const duplicateRadius = 0.001; // ~100 meters in degrees
+    const existingReport = await Report.findOne({
+      type,
+      'location.latitude': {
+        $gte: parseFloat(latitude) - duplicateRadius,
+        $lte: parseFloat(latitude) + duplicateRadius
+      },
+      'location.longitude': {
+        $gte: parseFloat(longitude) - duplicateRadius,
+        $lte: parseFloat(longitude) + duplicateRadius
+      },
+      status: { $in: ['pending', 'approved', 'in-progress'] },
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } // Within 24 hours
+    });
+
+    if (existingReport) {
+      return res.status(409).json({ 
+        message: 'A similar report already exists in this area',
+        existingReport: {
+          id: existingReport._id,
+          title: existingReport.title,
+          status: existingReport.status,
+          createdAt: existingReport.createdAt
+        }
+      });
+    }
+    
     let imageUrl = '';
     if (req.file) {
       const result = await cloudinary.uploader.upload(
