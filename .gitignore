@@ -100,3 +100,9 @@ Thumbs.db
 # Temporary folders
 tmp/
 temp/
+
+# Google Cloud Service Account Key
+service-account-key.json
+*.json
+!package.json
+!package-lock.json
